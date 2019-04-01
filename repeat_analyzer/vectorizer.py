@@ -4,39 +4,41 @@
 # In[ ]:
 
 
-import pandas as pd
-import numpy as np
 import datetime
 import time
 import sys
-import umap
-import hdbscan
-import matplotlib.pyplot as plt
 from collections import Counter
 from math import log
+
+import pandas as pd
+import numpy as np
+import umap
+import hdbscan
 from keras.layers import Input, Dense, LSTM, RepeatVector, TimeDistributed
 from keras.models import Model, Sequential, model_from_json
 from keras.preprocessing import sequence
+import matplotlib.pyplot as plt
+
+from repeat_analyzer.progress_it import progress_it, Progress_it_keras
+
+__all__ = [
+    'FeauterEncoder', 'FeauterNormalizer', 'FeauterOneHotEncoder', 
+    'FeauterVectorizer', 'SequenceVectorizer', 'Clusterizer'
+]
 
 
 # In[ ]:
 
 
-from progress_it import progress_it, Progress_it_keras
-
-
-# In[ ]:
-
-
-def sort_2d_array(data, sort_by = None, ascending = None):
+def sort_2d_array(data, sort_by=None, ascending=None):
     sort_by = (sort_by or list(range(data.shape[1])))[::-1]
     ascending = (ascending or [True] * len(sort_by))[::-1]
     
     for asc, i in enumerate(sort_by):
         data = data[
-            np.argsort(data[:, i], kind = 'mergesort') 
+            np.argsort(data[:, i], kind='mergesort') 
             if ascending[asc] else 
-            np.flip(np.argsort(data[:, i], kind = 'mergesort'))
+            np.flip(np.argsort(data[:, i], kind='mergesort'))
         ]
 
     return data
@@ -45,26 +47,25 @@ def sort_2d_array(data, sort_by = None, ascending = None):
 # In[ ]:
 
 
-class Feauter_encoder:
+class FeauterEncoder:
     
     def __init__(
-        self,
-        df,
-        columns,
-        index_column = None,
-        optimizer = 'adam',
-        loss = 'mse',
-        epohs_per_iteration = 500,
-        error_step = 0.001,
-        attepmts = 3,
-        progress_callback = None
-    ):
+            self,
+            df,
+            columns,
+            index_column=None,
+            optimizer='adam',
+            loss='mse',
+            epohs_per_iteration=500,
+            error_step=0.001,
+            attepmts=3,
+            progress_callback=None):
         if type(columns) is str:
             columns = (columns,)
         
         unexpected_columns = [col for col in columns + (tuple() if index_column is None else (index_column,)) if col not in df]
         if len(unexpected_columns):
-            raise RepeatAnalyzerException('В df отсутствуют столбцы:\n{}'.format(
+            raise AttributeError('В df отсутствуют столбцы:\n{}'.format(
                 '\n'.join(unexpected_columns)
             ))
         
@@ -76,13 +77,13 @@ class Feauter_encoder:
         }
         
         encoder, correction_value, correction_factor, best_error = self._fit(
-            X = self._ohe_multiseries(df),
-            optimizer = optimizer,
-            loss = loss,
-            epohs = epohs_per_iteration,
-            error_step = error_step,
-            attepmts = attepmts,
-            progress_callback = progress_callback
+            X=self._ohe_multiseries(df),
+            optimizer=optimizer,
+            loss=loss,
+            epohs=epohs_per_iteration,
+            error_step=error_step,
+            attepmts=attepmts,
+            progress_callback=progress_callback
         )
         
         self.model_params = {
@@ -102,7 +103,6 @@ class Feauter_encoder:
         return (encoder.predict(X) - self.model_params['correction_value']) * self.model_params['correction_factor']
     
     def _ohe_multiseries(self, df):
-        
         index = df.index if self.index_column is None else df[self.index_column]
         
         return np.hstack([
@@ -111,7 +111,6 @@ class Feauter_encoder:
         ])
     
     def _ohe_series(self, mapper, series, index):
-        
         a = series.map(mapper).fillna(0).to_numpy(np.int32)
         ai = index.map(
             {k: v for v, k in enumerate(index.unique())}
@@ -120,16 +119,15 @@ class Feauter_encoder:
         if index.hasnans:
             sys.stderr.write('Индекс содержит пустые значения, что может привести к искажению классифкатора.\n')
         
-        x = len(mapper) + 1
-        y = ai.max() + 1
+        x = len(mapper)+1
+        y = ai.max()+1
         
-        b = np.zeros((y, x), dtype = np.int32)
-        np.add.at(b, (ai, a), 1)
+        b = np.zeros((y,x), dtype=np.int32)
+        np.add.at(b, (ai,a), 1)
 
         return b.clip(max = 1)[:, 1:]
     
-    def _fit(self, X, optimizer = 'adam', loss = 'mse', epohs = 500, error_step = 0.001, attepmts = 3, progress_callback = None):
-        
+    def _fit(self, X, optimizer='adam', loss='mse', epohs=500, error_step=0.001, attepmts=3, progress_callback=None):
         if progress_callback is True:
             progress_callback = self._get_progress_callback()
             
@@ -138,7 +136,7 @@ class Feauter_encoder:
         Xu, sample_weight = self._get_unique_rows(X)
         if progress_it: progress_callback(0, f'Запуск обучения: {len(Xu):.0f} уникальных сэмплов из {len(X):.0f}.')
         
-        if ((X.sum(1).max() - X.sum(1).min()) / X.shape[1]) > 0.1:
+        if ((X.sum(1).max()-X.sum(1).min()) / X.shape[1]) > 0.1:
             column_names = '"{}"'.format('","'.join(self.columns))
             sys.stderr.write(
 f"""Слишком сложный классификатор, возможно неправильно определена группировка
@@ -155,10 +153,10 @@ f"""Слишком сложный классификатор, возможно �
 
             autoencoder.fit(
                 Xu, Xu, 
-                epochs = initial_epoch + epohs,
-                initial_epoch = initial_epoch,
-                verbose = 0,
-                sample_weight = (sample_weight * error + 1 * (1 - error))
+                epochs=initial_epoch + epohs,
+                initial_epoch=initial_epoch,
+                verbose=0,
+                sample_weight=(sample_weight*error + 1*(1-error))
             )
 
             last_error = error
@@ -170,7 +168,7 @@ f"""Слишком сложный классификатор, возможно �
             if (error <= error_step) or (attempt == attepmts): 
                 break
 
-            elif (last_error - error) > error_step: 
+            elif (last_error-error) > error_step: 
                 convergence = True
                 weights = [arr.copy() for arr in autoencoder.get_weights()]
                 if error < last_error:
@@ -187,7 +185,7 @@ f"""Слишком сложный классификатор, возможно �
                 attempt += 1
 
                 if not reset_weights:
-                    sample_weight = sample_weight * 0 + 1
+                    sample_weight = sample_weight*0 + 1
                     reset_weights = True
 
                 weights[-2][:, bad_features] = 0
@@ -223,10 +221,10 @@ f"""Слишком сложный классификатор, возможно �
         
         yu = encoder.predict(Xu)
         correction_value = yu.min()
-        correction_factor = 1 / (yu.max() - correction_value)
+        correction_factor = 1 / (yu.max()-correction_value)
 
         progress_callback(
-            1 if error == 0 else log(max(1, error // error_step), 1 // error_step),
+            1 if (error == 0) else log(max(1, error // error_step), 1 // error_step),
             f'Обучение завершено: погрешность {error:.2%}'
         )
 
@@ -236,7 +234,7 @@ f"""Слишком сложный классификатор, возможно �
     def _make_model(cls, X):
         input_len = X.shape[1]
         output_len = int(log(input_len, 1.3))
-        units_len_1 = int(input_len * (1 + log(X.sum(1).max(), 2)) )
+        units_len_1 = int(input_len * (1+log(X.sum(1).max(), 2)) )
         units_len_2 = input_len
 
         input_shape = Input((input_len, ))
@@ -262,11 +260,10 @@ f"""Слишком сложный классификатор, возможно �
 
     @classmethod
     def _calculate_error(cls, X, y):
-
         thresholds = [
             col_y[col_X != 1].max() 
             if (np.count_nonzero(col_X != 1) > 0) 
-            else col_y.min() - (col_y.max() - col_y.min()) / len(col_y)
+            else col_y.min() - (col_y.max()-col_y.min()) / len(col_y)
             for col_X, col_y in zip(X.T, y.T)
         ]
 
@@ -293,7 +290,7 @@ f"""Слишком сложный классификатор, возможно �
         row_mask = np.append([True], np.any(np.diff(sorted_data,axis = 0), 1))
         repeats = Counter([tuple(row) for row in sorted_data])
         data = sorted_data[row_mask]
-        return data, np.array([1 + log(repeats[tuple(row)]) for row in data])
+        return data, np.array([1+log(repeats[tuple(row)]) for row in data])
     
     @classmethod
     def _get_progress_callback(cls):
@@ -306,28 +303,60 @@ f"""Слишком сложный классификатор, возможно �
 # In[ ]:
 
 
-class Feauter_normalizer:
+class FeauterOneHotEncoder:
+    
+    def __init__(self, df, column, index_column=None):
+        self.column = column
+        self.index_column = index_column
+        self.mapper = {k: v for v, k in enumerate(df[column].unique(), 1)}
+    
+    def __call__(self, df):
+        index = df.index if (self.index_column is None) else df[self.index_column]
+        return self._ohe_series(self.mapper, df[self.column], index)
+    
+    def _ohe_series(self, mapper, series, index):
+        a = series.map(mapper).fillna(0).to_numpy(np.int32)
+        ai = index.map(
+            {k: v for v, k in enumerate(index.unique())}
+        ).fillna(0).to_numpy(np.int32)
+        
+        if index.hasnans:
+            sys.stderr.write('Индекс содержит пустые значения, что может привести к искажению классифкатора.\n')
+        
+        x = len(mapper)+1
+        y = ai.max()+1
+        
+        b = np.zeros((y,x), dtype=np.int32)
+        np.add.at(b, (ai,a), 1)
+
+        return b.clip(max = 1)[:, 1:]
+
+
+# In[ ]:
+
+
+class FeauterNormalizer:
     
     err_nonexist_columns = 'В df отсутствуют столбцы:\n{}'
     err_unsuported_dtypes = 'Присутствуют столбцы с неподдерживаемыми типами данных:\n{}'
     
-    def __init__(self, df, columns, index_column = None):
-
-        # проверяем входные данные
-        nonexist_columns = [col for col in columns + ([] if index_column is None else [index_column]) if col not in df]
-        if len(nonexist_columns):
-            raise RepeatAnalyzerException(self.err_nonexist_columns.format('\n'.join(nonexist_columns)))
-        
-        unsupported_dtypes = [f'{col} ({df[col].dtype.type.__name__})' for col in columns if df[col].dtype.kind not in 'iufc']
-        if len(unsupported_dtypes):
-            raise RepeatAnalyzerException(self.err_unsuported_dtypes.format('\n'.join(unsupported_dtypes)))
-        
-        # парсим инструкции
+    def __init__(self, df, columns, index_column=None):
         instructions = [
             col.copy() if (type(col) is dict) else {'column': col} 
             for col in columns
         ]
+        columns = [col['column'] for col in instructions]
+
+        # проверяем входные данные
+        nonexist_columns = [col for col in columns + ([] if index_column is None else [index_column]) if col not in df]
+        if len(nonexist_columns):
+            raise AttributeError(self.err_nonexist_columns.format('\n'.join(nonexist_columns)))
         
+        unsupported_dtypes = [f'{col} ({df[col].dtype.type.__name__})' for col in columns if df[col].dtype.kind not in 'iufc']
+        if len(unsupported_dtypes):
+            raise TypeError(self.err_unsuported_dtypes.format('\n'.join(unsupported_dtypes)))
+        
+        # парсим инструкции
         for col in instructions:
             col['agg'] = col.get('agg', 'sum')
             
@@ -342,7 +371,6 @@ class Feauter_normalizer:
         self.index = index_column
     
     def __call__(self, df):
-        
         df = df.groupby(
             df.index if (self.index is None) else self.index
         ).agg({
@@ -357,23 +385,25 @@ class Feauter_normalizer:
         ]).T.clip(min = 0, max = 1)
     
     class Linear:
-        def __init__(self, series, fillna_value = 0, correction_value = None, correction_factor = None):
+        def __init__(self, series, fillna_value=0, correction_value=None, correction_factor=None):
             self.correction_value = correction_value                 or series.fillna(fillna_value).to_numpy(np.float).min()
-            self.correction_factor = correction_factor                 or (1 / (series.fillna(fillna_value).to_numpy(np.float).max() - self.correction_value))
+            self.correction_factor = correction_factor                 or (1/(series.fillna(fillna_value).to_numpy(np.float).max() - self.correction_value))
             self.fillna_value = fillna_value
         
         def __call__(self, series):
-            return (series.fillna(self.fillna_value).to_numpy(np.float) - self.correction_value) * self.correction_factor
+            return (series.fillna(self.fillna_value).to_numpy(np.float)-self.correction_value) * self.correction_factor
     
     class Logarithm:
-        def __init__(self, series, fillna_value = 0, correction_value = None, logarithm_base = None):
+        def __init__(self, series, fillna_value=0, correction_value=None, logarithm_base=None):
             self.correction_value = correction_value                 or series.fillna(fillna_value).to_numpy(np.float).min()
-            self.logarithm_base = logarithm_base                 or (series.fillna(fillna_value).to_numpy(np.float).max() - self.correction_value)
+            self.logarithm_base = logarithm_base                 or (series.fillna(fillna_value).to_numpy(np.float).max()-self.correction_value)
             self.fillna_value = fillna_value
             
         def __call__(self, series):
-            values = series.fillna(self.fillna_value).to_numpy(np.float) - self.correction_value + 1
-            return np.log(values, where (values >= 1)) / np.log(self.logarithm_base + 1)
+            values = series.fillna(self.fillna_value).to_numpy(np.float) 
+            selector = values >= 0
+            values[selector] = np.log(values[selector]-self.correction_value+1) / np.log(self.logarithm_base+1)
+            return values
     
     algorithms = {
         'linear': Linear,
@@ -384,15 +414,14 @@ class Feauter_normalizer:
 # In[ ]:
 
 
-class Feauter_vectorizer:
+class FeauterVectorizer:
     
     def __init__(
-        self, 
-        df, 
-        encoders = None,
-        normalizers = None,
-        index_column = None
-    ):
+            self, 
+            df, 
+            encoders=None,
+            normalizers=None,
+            index_column=None):
         """
         df - экземпляр pandas.DataFrame - Исходные данные, для обучения векторизаторов.
         
@@ -408,7 +437,7 @@ class Feauter_vectorizer:
                 ('Наименование столбца 1', 'Наименование столбца 2', 'Наименование столбца 3'),
                 
                 
-                # Словарь параметров, которые будут переданы инициализатору класса Feauter_encoder
+                # Словарь параметров, которые будут переданы инициализатору класса FeauterEncoder
                 {
                     'columns': ('Наименование столбца 1', 'Наименование столбца 2'),
                     # 'columns': 'Наименование столбца 1',
@@ -452,10 +481,10 @@ class Feauter_vectorizer:
                     correction_value: None, # Вычитатель, по умолчанию минмиальное значение в выборке
                     logarithm_base: None # База для логарифма, по умолчанию максимальное значение в выборке + 1
                 }
+                
         """
-        
         if (encoders is None) and (normalizers is None):
-            raise RepeatAnalyzerException('Не передан ни один параметр для векторизации: encoders, normalizers')
+            raise TypeError('Не передан ни один параметр для векторизации: encoders, normalizers')
         
         self.index_column = index_column
         self.vectorizers = []
@@ -464,45 +493,70 @@ class Feauter_vectorizer:
             if type(normalizers) is not list: normalizers = [normalizers]
             
             self.vectorizers.append(
-                Feauter_normalizer(
-                    df,
-                    normalizers,
-                    index_column
-                )
-            )
+                FeauterNormalizer(df, normalizers, index_column))
             
         if encoders is not None:
-            if type(encoders) is not list: encoders = [encoders]
-                
-            self._make_encoders(
-                df, 
-                encoders, 
-                index_column
-            )
+            e_instructions, ohe_columns = self._prepare_encoder_instructions(df, encoders)
+            
+            if ohe_columns:
+                self._make_ohencoders(df, ohe_columns, index_column)
+            
+            if e_instructions:
+                self._make_encoders(df, e_instructions, index_column)
     
     def __call__(self, df):
+        index = (df.index if (self.index_column is None) else df[self.index_column]).drop_duplicates()
+        
         return pd.DataFrame(
             np.hstack([
                 vectorizer(df)
                 for vectorizer in self.vectorizers
             ]), 
-            (df.index if self.index_column is None else df[self.index_column]).drop_duplicates()
-        )
+            index)
+    
+    def _prepare_encoder_instructions(self, df, instructions):
+        if type(instructions) is not list: instructions = [instructions]
+        
+        instructions = [
+            i if type(i) is dict else {'columns': i}
+            for i in instructions
+        ]
+        
+        new_instructions = []
+        for i in instructions:
+            if type(i['columns']) is tuple:
+                for idx in range(len(i['columns'])):
+                    new_i = i.copy()
+                    new_i.update({'columns': i['columns'][: idx+1]})
+                    new_instructions.append(new_i)
+            else:
+                new_instructions.append(i)
+        
+        e_instructions = []
+        ohe_columns = []
+        for i in new_instructions:
+            unique_values = df[i['columns']].nunique()
+            if unique_values >= 5:
+                e_instructions.append(i)
+            elif unique_values > 1:
+                ohe_columns.append(i['columns'])
+            else:
+                sys.stderr.write(
+                    'Столбец "{}" содержит единственное значение и будет исключен из обучения'.format(
+                        i['columns']))
+        
+        return e_instructions, ohe_columns
     
     def _make_encoders(
-        self, 
-        df, 
-        instructions, 
-        index_column=None
-    ):
-        
+            self, 
+            df, 
+            instructions, 
+            index_column=None):
         all_errors = []
         
         with progress_it(len(instructions), title = 'Обучение автоэнкодеров') as progress:
         
             for instruction in instructions:
-                if not type(instruction) is dict:
-                    instruction = {'columns': instruction}
                     
                 column_names = (instruction['columns'],) if type(instruction['columns']) is str else instruction['columns']
                 
@@ -510,10 +564,10 @@ class Feauter_vectorizer:
                     f"""<div>Кодирование "{'", "'.join(column_names)}":</div>"""
                 )
                 
-                encoder = Feauter_encoder(
-                    df = df,
-                    index_column = index_column,
-                    progress_callback = progress_callback,
+                encoder = FeauterEncoder(
+                    df=df,
+                    index_column=index_column,
+                    progress_callback=progress_callback,
                     **instruction
                 )
                 
@@ -523,26 +577,73 @@ class Feauter_vectorizer:
                 
                 progress.base_counter_update()
         
-        print('Отчет по енкодерам:')
+        print('Отчет по энкодерам:')
         print('\n'.join([
             '"{}": ошибка {:.2%}'.format(
                 '", "'.join(report[0]),
                 report[1]
             ) for report in all_errors
         ]))
+    
+    def _make_ohencoders(self, df, columns, index_column=None):
+        for column in columns:
+            self.vectorizers.append(FeauterOneHotEncoder(df, column, index_column))
 
 
 # In[ ]:
 
 
-class Sequence_vectorizer:
-    
-    def __init__(self, data, progress_title = 'Fit progress', max_sequence_depth = None):
-        """data - 2D-array with prefix columns (it will be dropped when learning): 
-            - 0-indexed is a group_id, 
-            - 1-indexed is a timestep_id"""
+def group_ranges(groups, data):
+    order = np.lexsort((data, groups))
+    groups = groups[order]
+    data = data[order]
+    group_index = groups[1:] != groups[:-1]
+    return np.vstack([
+        np.unique(groups),
+        data[np.append([True], group_index)],
+        data[np.append(group_index, [True])]
+    ]).T
+
+def get_intersecting_ranges(groups, data):
+    g = group_ranges(groups, data)
+    return g[
+        np.append([False], g[1:, 1] <= g[:-1, 1]) 
+        | np.append(g[:-1, 2] >= g[1:, 2], [False]) 
+        | np.append([False], g[1:, 1] <= g[:-1, 2])
+        | np.append(g[:-1, 2] >= g[1:, 1], [False]),
+        0
+    ]
+
+def count_bad_samples(X, y):
+    bad_samples = np.empty(X.shape, np.bool)
+    bad_feuters = []
+    for i in range(X.shape[1]):
+        bad_items = get_intersecting_ranges(X[:, i], y[:, i])
+        bad_samples[:, i] = np.isin(X[:, i], bad_items)
         
-        self.detect_sequence_shape(data, max_len = max_sequence_depth)
+        if bad_items.size > 0: 
+            bad_feuters.append(i)
+    
+    return bad_samples, bad_feuters
+
+def count_bad_sequences(X, y):
+    bad_samples, bad_feuters = count_bad_samples(X.reshape(-1, X.shape[-1]), y.reshape(-1, X.shape[-1]))
+    return np.count_nonzero(np.any(np.any(bad_samples, axis=1).reshape(X.shape[:2]), axis=1)), bad_feuters
+
+
+# In[ ]:
+
+
+class SequenceVectorizer:
+    
+    def __init__(self, data, progress_title='Fit progress', max_sequence_depth=None):
+        """
+        data - 2D-array with prefix columns (it will be dropped when learning): 
+            - 0-indexed is a group_id, 
+            - 1-indexed is a timestep_id
+            
+        """
+        self.detect_sequence_shape(data, max_len=max_sequence_depth)
         
         self.progress_title = progress_title
         
@@ -554,10 +655,12 @@ class Sequence_vectorizer:
         }
     
     def __call__(self, data):
-        """data - 2D-array with prefix columns (it will be dropped when learning): 
+        """
+        data - 2D-array with prefix columns (it will be dropped when learning): 
             - 0-indexed is a group_id, 
-            - 1-indexed is a timestep_id"""
-        
+            - 1-indexed is a timestep_id
+            
+        """
         ids, X = self.pre_padding_sequences(data)
         
         encoder = model_from_json(self.model_params['architecture'])
@@ -565,8 +668,8 @@ class Sequence_vectorizer:
         
         return np.hstack([ids.reshape(-1, 1), encoder.predict(X)])
         
-    def detect_sequence_shape(self, data, max_len_quentile = 0.9, max_len = None):
-        uniques, frequency = np.unique(data[:, 0], return_counts = True)
+    def detect_sequence_shape(self, data, max_len_quentile=0.9, max_len=None):
+        uniques, frequency = np.unique(data[:, 0], return_counts=True)
         
         target_len = np.quantile(
             frequency[np.searchsorted(uniques, data[:, 0])], 
@@ -577,33 +680,33 @@ class Sequence_vectorizer:
         self.sequence_shape = target_len if (max_len is None) else max(target_len, max_len), data.shape[1] - 2
         
     def pre_padding_sequences(self, data):
-        'returns (sequence_ids, padded_data)'
+        """returns (sequence_ids, padded_data)"""
         data = sort_2d_array(data, [0, 1])
         indexes = np.argwhere(np.diff(data[:, 0])).reshape(-1)
         
         return data[np.append([0], indexes), 0], sequence.pad_sequences(
             np.split(data[:, 2:], indexes), 
-            maxlen = self.sequence_shape[0], 
-            dtype = data.dtype,
-            padding = 'post',
-            truncating = 'post'
+            maxlen=self.sequence_shape[0], 
+            dtype=data.dtype,
+            padding='post',
+            truncating='post'
         )
     
     def make_model(self):
         depth, width = self.sequence_shape
-        units = width * depth * 4
-        vector_width = int(width * (1 + log(depth)))
+        units = width*depth*4
+        vector_width = int(width * (1+log(depth)))
         
         input_shape = Input(self.sequence_shape)
         
         encoder = Sequential([
-            LSTM(units, activation = 'elu'),
+            LSTM(units, activation='elu'),
             Dense(vector_width, activation='softmax')
         ])
         
         decoder = Sequential([
             RepeatVector(depth),
-            LSTM(units, activation = 'elu', return_sequences = True),
+            LSTM(units, activation='elu', return_sequences=True),
             TimeDistributed(Dense(width, activation='linear'))
         ])
         
@@ -611,10 +714,9 @@ class Sequence_vectorizer:
         
         return encoder, autoencoder
     
-    def fit(self, data, min_step = 0.001, attempts = 3):
-        
+    def fit(self, data, epochs_per_step = 5, min_error_step=0.001, attempts=3):
         if attempts <= 0:
-            raise RepeatAnalyzerException(f'Количество попыток attempts не может быть меньше 0, передано: {attempts}')
+            raise TypeError(f'Количество попыток attempts не может быть меньше 0, передано: {attempts}')
         
         encoder, autoencoder = self.make_model()
         
@@ -624,32 +726,35 @@ class Sequence_vectorizer:
         
         progress = Progress_it_keras(self.progress_title)
         epochs_counter = 0
-        prev_loss = 0
+        prev_error = 0
         speed = 1
         
         while attempts > 0:
             
             autoencoder.fit(
                 data, data,
-                epochs = epochs_counter + 1,
-                initial_epoch = epochs_counter,
-                verbose = 0,
-                callbacks = [progress]
+                epochs=epochs_counter + epochs_per_step,
+                initial_epoch=epochs_counter,
+                verbose=0,
+                callbacks=[progress]
             )
             
-            epochs_counter += 1
+            epochs_counter += epochs_per_step
             
-            loss = autoencoder.history.history['loss'][-1]
-            if epochs_counter > 1:
-                speed = 1 - loss / prev_loss
-                if speed < 0: attempts -= 1
-                elif speed < min_step: break
+            error, bad_feuters = count_bad_sequences(data, autoencoder.predict(data))
             
-            progress.progbar.subtitle = f'Ошибка последней эпохи {loss} ({-speed:.1%})'
+            if epochs_counter > epochs_per_step:
+                speed = prev_error-error
+                if speed < 0: 
+                    attempts -= 1
+                elif ((speed < min_error_step) and (error < 0.9)) or (error <= min_error_step): 
+                    break
             
-            prev_loss = loss
+            progress.progbar.subtitle = f'Доля ошибочных предсказаний: {error} ({-speed:.1%})'
+            
+            prev_error = error
         
-        print(f'Ошибка последней эпохи {loss} ({-speed:.1%})')
+        print(f'Доля ошибочных предсказаний: {error} ({-speed:.1%})')
         
         return encoder
 
@@ -659,22 +764,27 @@ class Sequence_vectorizer:
 
 class Clusterizer:
     
-    def __init__(self, data, verbose = True):
-        """data - 2D-array with prefix columns (it will be dropped when learning): 
-            - 0-indexed is a sample-id"""
+    def __init__(self, data, verbose=True):
+        """
+        data - 2D-array with prefix columns (it will be dropped when learning): 
+            - 0-indexed is a sample-id
+        
+        """
         if verbose: print('Запуск кластеризации...')
         
         self.fit_umap(data)
-        
         self.fit_hdbscan( self.transform_umap(data) )
         
         if verbose: 
-            print(f'Кластеризация завершена, выявлено {(self.hdbscan.labels_.max() + 1):.0f} кластеров.')
+            print(f'Кластеризация завершена, выявлено {(self.hdbscan.labels_.max()+1):.0f} кластеров.')
             self.draw(data)
 
     def __call__(self, data):
-        """data - 2D-array with prefix columns (it will be dropped when learning): 
-            - 0-indexed is a sample-id"""
+        """
+        data - 2D-array with prefix columns (it will be dropped when learning): 
+            - 0-indexed is a sample-id
+        
+        """
         return self.transform_hdbscan( self.transform_umap(data) )
     
     def fit_umap(self, data):
@@ -688,9 +798,9 @@ class Clusterizer:
         min_cluster_size = int(data.shape[0]*0.01)
         
         self.hdbscan = hdbscan.HDBSCAN(
-            min_samples = 1,
-            min_cluster_size = min_cluster_size,
-            prediction_data = True
+            min_samples=1,
+            min_cluster_size=min_cluster_size,
+            prediction_data=True
         ).fit(data[:, 1:])
     
     def transform_hdbscan(self, data):

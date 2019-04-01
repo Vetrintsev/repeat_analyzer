@@ -1,55 +1,50 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[ ]:
 
+
+import datetime
+from collections import Counter
 
 import pandas as pd
 import numpy as np
-import datetime
 import xlsxwriter
-from collections import Counter
+
+__all__ = ['Column_format', 'Column_producer', 'Export_to_excel']
 
 
-# In[4]:
+# In[ ]:
 
 
 def series_of_tuples_to_data_frame(series, columns):
     return pd.DataFrame(
-        data = list(series.values),
-        index = series.index,
-        columns = columns
+        data=list(series.values),
+        index=series.index,
+        columns=columns
     )
 
 def wrap_in_list(obj):
     return obj if (type(obj) is list) else [obj]
 
-def series_of_tuples_to_data_frame(series, columns):
-    return pd.DataFrame(
-        data = list(series.values),
-        index = series.index,
-        columns = columns
-    )
 
-
-# In[6]:
+# In[ ]:
 
 
 class Column_format:
     def __init__(
         self, 
         workbook,
-        data_type = None,
+        data_type=None,
         **format_props
     ):
         self._format = None
         self.workbook = workbook
         self.data_type = data_type
-        self.format_properties = self.__formats[data_type or 'default'].copy()
+        self.format_properties = self._formats[data_type or 'default'].copy()
         self.format_properties.update(format_props)
     
     def update(self, other_format):
-        
         if other_format is not None:
         
             self._format = None
@@ -67,7 +62,6 @@ class Column_format:
         )
     
     def darken_bg_color(self, dense = 0.1):
-        
         return self.update({
             'bg_color': self.mix_hex_color(
                 self.format_properties['bg_color'] if 'bg_color' in self.format_properties else '#fff',
@@ -76,12 +70,11 @@ class Column_format:
             )
         })
     
-    def detect_format(self, series, skip_detected = True):
-        
+    def detect_format(self, series, skip_detected=True):
         if self.data_type is None or not skip_detected:
             series_type = series.dtype.type
 
-            for types, frmt in self.__format_mapper.items():
+            for types, frmt in self._format_mapper.items():
                 if series_type in types:
                     self.data_type = frmt
                     break
@@ -89,7 +82,7 @@ class Column_format:
             else:
                 self.data_type = 'default'
         
-            self.update(self.__formats[self.data_type])
+            self.update(self._formats[self.data_type])
         
         return self
     
@@ -100,16 +93,16 @@ class Column_format:
         
         return self._format
     
-    __formats = {
+    _formats = {
         'default': {'border':4, 'valign':'top'},
         'datetime': {'num_format':'dd.mm.yyyy HH:MM'},
         'float': {'num_format':'0.0', 'align':'right'},
         'int': {'num_format':'#', 'align':'right'}
     }
     
-    __title_format_default = {'text_wrap': True,'bold': True,'align': 'center', 'valign': 'vcenter'}
+    _title_format_default = {'text_wrap': True,'bold': True,'align': 'center', 'valign': 'vcenter'}
     
-    __format_mapper = {
+    _format_mapper = {
         (np.datetime64, datetime.datetime): 'datetime',
         (np.float, np.float16, np.float32, np.float64, np.float_, np.float_power): 'float',
         (np.int, np.int0, np.int16, np.int32, np.int64, np.int8, np.int_): 'int'
@@ -117,14 +110,14 @@ class Column_format:
 
     @classmethod
     def default_format(cls, workbook):
-        return Column_format(workbook, **cls.__formats['default'])
+        return Column_format(workbook, **cls._formats['default'])
     
     @classmethod
     def title_format(cls, workbook):
-        return Column_format(workbook, **cls.__title_format_default)
+        return Column_format(workbook, **cls._title_format_default)
     
     @classmethod
-    def __color_get_rgb(cls, hex_color):
+    def _color_get_rgb(cls, hex_color):
         if type(hex_color) is int:
             hex_color = hex(hex_color)[2:].zfill(6)
         
@@ -144,10 +137,9 @@ class Column_format:
             return [int(c * 2, 16) for c in hex_color]
     
     @classmethod
-    def mix_hex_color(cls, color, new_color, dense = 0.1):
-        
-        color_rgb = cls.__color_get_rgb(color)
-        new_color_rgb = cls.__color_get_rgb(new_color)
+    def mix_hex_color(cls, color, new_color, dense=0.1):
+        color_rgb = cls._color_get_rgb(color)
+        new_color_rgb = cls._color_get_rgb(new_color)
 
         return '#' + ''.join([
             hex(c)[2:].zfill(2)
@@ -155,27 +147,27 @@ class Column_format:
         ])
 
 
-# In[379]:
+# In[ ]:
 
 
 class Column_producer:
     
     def __init__(
-        self,
-        workbook,
-        func = None,
-        mapper = None,
-        columns = None,
-        title = None,
-        title_format = None,
-        title_splitter = ' | ',
-        value_format = None,
-        value_splitter = ' | ',
-        column_width = 15,
-        merge = True,
-        hide = False,
-    ):
-        """Column_producer - универсальный обработчик для выходного столбца в Excel.
+            self,
+            workbook,
+            func=None,
+            mapper=None,
+            columns=None,
+            title=None,
+            title_format=None,
+            title_splitter=' | ',
+            value_format=None,
+            value_splitter=' | ',
+            column_width=15,
+            merge=True,
+            hide=False):
+        """
+        Column_producer - универсальный обработчик для выходного столбца в Excel.
         
         workbook - экземпляр xlsxwriter.workbook
         
@@ -249,6 +241,7 @@ class Column_producer:
             
         column_width - ширина столбца в файле Excel, число. 
             column_width = 25
+        
         """
         if type(columns) not in [str, tuple, type(None)]:
             raise TypeError(f'columns принадлежит типу \'{type(columns).__name__}\'. Допустимые типы: \'str\', \'tuple\'')
@@ -259,22 +252,22 @@ class Column_producer:
         self.value_splitter = value_splitter
         self._format = Column_format(
             workbook, 
-            **(value_format if value_format is not None else {})
-        )
+            **(value_format if value_format is not None else {}))
         self._formats_even = None
         self._title_format = Column_format(
-            workbook, 
-            **(title_format if title_format is not None else {})
-        ).update(
-            Column_format.title_format(workbook)
-        )
+                workbook, 
+                **(title_format if title_format is not None else {})
+            ).update(
+                Column_format.title_format(workbook))
         self.column_width = column_width
         self.merge = merge
         self.hide = hide
     
     def __call__(self, df):
-        """запускает функцию-обработчик
+        """
+        Запускает функцию-обработчик
         принимает df - pandas.DataFrame
+        
         """
         return self.func(df)
     
@@ -315,13 +308,13 @@ class Column_producer:
             if type(mapper) is not dict:
                 raise TypeError(f'mapper имеет тип \'{type(mapper)}\', допустимый тип: \'dict\'')
                 
-            func = lambda series: series.map(mapper)
+            def func(series): return series.map(mapper)
         
         if type(columns) is str:
-            get_series = lambda df: df[columns]
+            def get_series(df): return df[columns]
         
         else:
-            get_series = lambda df: pd.Series(
+            def get_series(df): return pd.Series(
                 [
                     value_splitter.join(
                         [v for v in cols if v.lower() not in ['nan', 'nat', 'none']]
@@ -332,15 +325,14 @@ class Column_producer:
             )
         
         if func is None:
-            get_unique = lambda s: (
-                s.iloc[0]
-                if s.nunique() == 1 
-                else '; \n'.join(sorted([
-                    v 
-                    for v in s.astype('str').unique() 
-                    if v.lower() not in ['nan', 'nat', 'none']
-                ]))
-            )
+            def get_unique(s): 
+                if s.nunique() == 1:
+                    return s.iloc[0]
+                else:
+                    return '; \n'.join(sorted([
+                        v for v in s.astype('str').unique() 
+                        if v.lower() not in ['nan', 'nat', 'none']
+                    ]))
             
             return lambda df: get_unique(get_series(df))
         
@@ -352,8 +344,7 @@ class Column_producer:
                 'last_value': lambda df: get_series(df).dropna().iloc[-1],
             }.get(
                 func,
-                lambda df: get_series(df).agg(func)
-            )
+                lambda df: get_series(df).agg(func))
         
         # if callable(func):
         return lambda df: func(get_series(df))
@@ -373,8 +364,9 @@ class Column_producer:
         return title
     
     @classmethod
-    def Constructor(cls, workbook, instruction, default_column_params = None):
-        """Генерирует экземпляр Column_producer по короткой инструкции.
+    def Constructor(cls, workbook, instruction, default_column_params=None):
+        """
+        Генерирует экземпляр Column_producer по короткой инструкции.
         
         workbook - экземпляр xlsxwriter.workbook
         
@@ -403,15 +395,14 @@ class Column_producer:
                 'data_type': 'int', # 'float', 'datetime'
                 'column_width': 30
             } # Будет вызван конструктор Column_producer(workbook, **instruction)
+        
         """
         params = {} if (default_column_params is None) else default_column_params.copy()
         
-        if type(instruction) in [str, tuple]:
-            params.update({
-                'columns': instruction
-            })
+        if isinstance(instruction, (str,tuple)):
+            params.update({'columns': instruction})
         
-        elif type(instruction) is dict:
+        elif isinstance(instruction, dict):
             if len(instruction) == 1:
                 columns, func = list(instruction.items())[0]
                 params.update({
@@ -425,10 +416,10 @@ class Column_producer:
         else:
             raise RepeatAnalyzerException('instruction может принадлежать только одному из типов \'str\', \'tuple\' или \'dict\'')
         
-        return Column_producer(workbook = workbook, **params)
+        return Column_producer(workbook=workbook, **params)
 
 
-# In[385]:
+# In[ ]:
 
 
 class Part_of_data:
@@ -440,19 +431,18 @@ class Part_of_data:
     _default_separator_label = '+{:.0f} ...'
 
     def __init__(
-        self, df, workbook, sheet, 
-        group_columns, export_columns, 
-        sort_by = None, sort_ascending = None, 
-        default_column_params = None, 
-        collapse_rows_after = None, collapsed_separator_label = _default_separator_label,
-        detail_data_params = None
-    ):
+            self, df, workbook, sheet, 
+            group_columns, export_columns, 
+            sort_by=None, sort_ascending=None, 
+            default_column_params=None, 
+            collapse_rows_after=None, collapsed_separator_label=_default_separator_label,
+            detail_data_params=None):
         self.group_columns = wrap_in_list(group_columns)
         self.sort_by = sort_by
         self.sort_ascending = sort_ascending
         self.collapse_rows_after = collapse_rows_after
         self.collapsed_separator_label = collapsed_separator_label
-        self.collapsed_separator_format = Column_format(workbook, bold = True)
+        self.collapsed_separator_format = Column_format(workbook, bold=True)
         self.sheet = sheet
         self._even_row = True
 
@@ -465,9 +455,8 @@ class Part_of_data:
         self._make_iterator()
     
     def _make_iterator(self):
-
         if self._parent_layer_sorting_name not in self.df:
-            data_iterator = self.df[self.get_column_titles()].itertuples(index = False)
+            data_iterator = self.df[self.get_column_titles()].itertuples(index=False)
             
             def iterator():
                 nonlocal data_iterator
@@ -477,10 +466,10 @@ class Part_of_data:
                 
                 else:
                     data_iterator = None
-                    self.iterator = None
+                    self._iterator = None
             
         else:
-            data_iterator = self.df[self.get_column_titles()].itertuples(index = True)
+            data_iterator = self.df[self.get_column_titles()].itertuples(index=True)
             cache = None
             
             def iterator():
@@ -502,29 +491,27 @@ class Part_of_data:
                 else:
                     cache = None
                     data_iterator = None
-                    self.iterator = None
+                    self._iterator = None
         
-        self.iterator = iterator
+        self._iterator = iterator
     
     def write_data(self, row, column):
         self._write_titles(row, column)
         
-        return self._write_data(row + 1, column, 0) + 1, self.get_all_column_count()
+        return self._write_data(row+1, column, 0) + 1, self.get_all_column_count()
     
     def _write_titles(self, row, column):
-        
         for column_idx, col in enumerate(self.export_columns):
-            self.sheet.set_column(column + column_idx, column + column_idx, col.column_width)
+            self.sheet.set_column(column+column_idx, column+column_idx, col.column_width)
             
             self.sheet.write(
                 row,
-                column + column_idx,
+                column+column_idx,
                 col.title,
-                col.get_title_format()
-            )
+                col.get_title_format())
         
         if self.detail_data is not None:
-            self.detail_data._write_titles(row, column + len(self.export_columns))
+            self.detail_data._write_titles(row, column+len(self.export_columns))
     
     def _write_data(self, row, column, collapse_level):
         if self.detail_data is None:
@@ -543,16 +530,16 @@ class Part_of_data:
     def _write_detail(self, row, column, collapse_level):
         collapsed_row = None
         row_cursor = 0
-        for data in self.iterator():
+        for data in self._iterator():
             
             if row_cursor == self.collapse_rows_after:
                 collapse_level += 1
-                collapsed_row = row_cursor + row - 1
+                collapsed_row = row_cursor+row-1
             
-            self._write_cells(data, row + row_cursor, column, self._even_row_generator())
+            self._write_cells(data, row+row_cursor, column, self._even_row_generator())
 
             if collapse_level > 0:
-                self.sheet.set_row(row + row_cursor, None, None, {'level': collapse_level, 'hidden': True})
+                self.sheet.set_row(row+row_cursor, None, None, {'level': collapse_level, 'hidden': True})
 
             row_cursor += 1
         
@@ -561,8 +548,7 @@ class Part_of_data:
                 collapsed_row, None, None, 
                 {'level': collapse_level - 1, 'hidden': True, 'collapsed': True}
                 if (collapse_level > 1) 
-                else {'collapsed': True}
-            )
+                else {'collapsed': True})
         
         return row_cursor
     
@@ -570,10 +556,9 @@ class Part_of_data:
         for col_index, col in enumerate(self.export_columns):
             self.sheet.write(
                 row,
-                column + col_index,
+                column+col_index,
                 self._prepare_value(data[col_index]),
-                col.get_value_format(even_row)
-            )
+                col.get_value_format(even_row))
     
     def _write_group(self, row, column, collapse_level):
         collapsed_row = None
@@ -581,7 +566,7 @@ class Part_of_data:
         columns = len(self.export_columns)
         row_cursor = 0
         
-        for data in self.iterator():
+        for data in self._iterator():
             
             if row_cursor == self.collapse_rows_after:
                 collapse_level += 1
@@ -589,12 +574,11 @@ class Part_of_data:
                 row_cursor += 1
             
             rows_height = self.detail_data._write_data(
-                row + row_cursor,
-                column + columns,
-                collapse_level
-            )
+                row+row_cursor,
+                column+columns,
+                collapse_level)
             
-            self._write_grouped_cells(data, row + row_cursor, column, rows_height, self._even_row_generator())
+            self._write_grouped_cells(data, row+row_cursor, column, rows_height, self._even_row_generator())
             
             if collapsed_row is not None: 
                 collapsed_count += 1
@@ -607,8 +591,7 @@ class Part_of_data:
                 collapsed_row, None, None, 
                 {'level': collapse_level - 1, 'hidden': True, 'collapsed': True}
                 if (collapse_level > 1) 
-                else {'collapsed': True}
-            )
+                else {'collapsed': True})
         
         return row_cursor
     
@@ -617,29 +600,25 @@ class Part_of_data:
             row, column, 
             row, column + self.get_all_column_count() - 1,
             self.collapsed_separator_label.format(collapsed_count),
-            self.collapsed_separator_format.format
-        )
+            self.collapsed_separator_format.format)
     
     def _write_grouped_cells(self, data, row, column, rows_height, even_row):
         for col_index, col in enumerate(self.export_columns):
             if col.merge and (rows_height > 1):
                 self.sheet.merge_range(
-                    row, column + col_index, 
-                    row + rows_height - 1, column + col_index,
+                    row, column+col_index, 
+                    row+rows_height-1, column+col_index,
                     self._prepare_value(data[col_index]),
-                    col.get_value_format(even_row)
-                )
+                    col.get_value_format(even_row))
 
             else:
                 for row_index in range(rows_height):
                     self.sheet.write(
-                        row + row_index, column + col_index,
+                        row+row_index, column+col_index,
                         self._prepare_value(data[col_index]),
-                        col.get_value_format(even_row)
-                    )
+                        col.get_value_format(even_row))
     
-    def _prepare_export_columns(self, book, columns, default_column_params = None):
-        
+    def _prepare_export_columns(self, book, columns, default_column_params=None):
         self.export_columns = [
             Column_producer.Constructor(book, params, default_column_params)
             for params in columns
@@ -657,21 +636,18 @@ class Part_of_data:
         if len(duplicate_titles) > 0:
             raise self.DuplicatedColumnTitles(
                 'Группа столбцов содержит повторяющиеся заголовки:\n"{}"'.format(
-                    '"\n"'.join(duplicate_titles)
-                )
-            )
+                    '"\n"'.join(duplicate_titles)))
 
-    def get_column_titles(self, hidden = False):
+    def get_column_titles(self, hidden=False):
         return [col.title for col in self.export_columns if (not col.hide) or hidden]
     
-    def get_column_count(self, hidden = False):
+    def get_column_count(self, hidden=False):
         return len([1 for col in self.export_columns if (not col.hide) or hidden])
     
-    def get_all_column_count(self, hidden = False):
-        return self.get_column_count(hidden) + (
-            0 if (self.detail_data is None) 
-            else self.detail_data.get_all_column_count(hidden)
-        )
+    def get_all_column_count(self, hidden=False):
+        if self.detail_data is None:
+            return self.get_column_count(hidden)
+        return self.get_column_count(hidden) + self.detail_data.get_all_column_count(hidden)
 
     def _add_detail_data_layer(self, df, workbook, detail_data_params):
         if detail_data_params is None: 
@@ -691,40 +667,33 @@ class Part_of_data:
             params['sort_ascending'] = [True] + (
                 params['sort_ascending']
                 if type(params.get('sort_ascending', True)) is list 
-                else [params.get('sort_ascending', True)] * (len(params['sort_by']) - 1)
-            )            
+                else [params.get('sort_ascending', True)] * (len(params['sort_by']) - 1))            
 
             self.detail_data = Part_of_data(
                 df = self._prepare_detail_data(df), 
                 workbook = workbook, 
                 sheet = self.sheet,
-                **params
-            )
+                **params)
     
     def _prepare_data(self, df):
-        
         hasnans_columns = [col for col in self.group_columns if df[col].hasnans]
         if len(hasnans_columns) > 0:
             raise self.GroupColumnsHasNans(
-                'Невозможно сгруппировать данные по столбцам с пустыми значениями:\n"{}"'.format(
-                    '"\n"'.join(hasnans_columns)
-                )
-            )
+                'Невозможно сгруппировать данные по столбцам с пустыми значениями:\n["{}"]'.format(
+                    '",\n"'.join(hasnans_columns)))
         
         def apply_data(df):
             return tuple([col(df) for col in self.export_columns])
         
         self.df = series_of_tuples_to_data_frame(
             df.groupby(
-                self.group_columns,
-                sort = False
-            ).apply(
-                apply_data
-            ),
-            self.get_column_titles(True)
-        )
+                    self.group_columns,
+                    sort=False
+                ).apply(
+                    apply_data),
+            self.get_column_titles(True))
         
-        self.df.index.names = [None] * len(self.df.index.names)
+        self.df.index.names = [None]*len(self.df.index.names)
         
         for col in self.export_columns:
             col.detect_value_format(self.df[col.title])
@@ -732,9 +701,8 @@ class Part_of_data:
         if self.sort_by is not None:    
             self.df.sort_values(
                 self.sort_by,
-                ascending = self.sort_ascending,
-                inplace = True
-            )
+                ascending=self.sort_ascending,
+                inplace=True)
         
         self.export_columns = [col for col in self.export_columns if not col.hide]
         
@@ -745,15 +713,13 @@ class Part_of_data:
             pd.DataFrame(
                 np.arange(parent_index.shape[0]), 
                 index = parent_index, 
-                columns = [self._parent_layer_sorting_name]
-            ),
+                columns = [self._parent_layer_sorting_name]),
             left_on = self.group_columns,
             right_index = True,
             suffixes = ('_drop', '')
         ).drop(
             columns = [f'{self._parent_layer_sorting_name}_drop'],
-            errors = 'ignore'
-        )
+            errors = 'ignore')
 
 
 # In[ ]:
@@ -773,8 +739,8 @@ def _get_workbook(workbook, sheet_name):
 
     else:
         raise TypeError(
-            f'workbook принадлежит типу \'{type(workbook).__name__}\', допустим только тип \'str\' или xlsxwriter.workbook'
-        )
+            'workbook принадлежит типу \'{}\', допустим только тип \'str\' или xlsxwriter.workbook'.format(
+                type(workbook).__name__))
 
     sheet = book.add_worksheet(str(sheet_name))
     sheet.outline_settings(True, False, True, False)
@@ -791,17 +757,15 @@ def _write_description(book, sheet, description, row, column, columns_width):
             row, 
             column, 
             row,
-            column + columns_width - 1,
+            column+columns_width-1,
             description,
             book.add_format({
                 'align':'left', 'valign':'top', 'text_wrap':True
-            })
-        )
+            }))
 
         sheet.set_row(
             row,
-            len(description.splitlines()) * 15
-        )
+            len(description.splitlines())*15)
 
         return 1
 
@@ -812,17 +776,16 @@ def _write_description(book, sheet, description, row, column, columns_width):
 
 def _write_data_markup(book, sheet, data_markup, row, column):
   row_cursor = 0
-  
   description = data_markup.pop('description', None)
   
   if description is not None:
-      description_point = row + row_cursor, column
+      description_point = row+row_cursor, column
       row_cursor += 1
   
   rows, columns = Part_of_data(
       workbook = book, sheet = sheet,
       **data_markup
-  ).write_data(row + row_cursor, column)
+  ).write_data(row+row_cursor, column)
   
   row_cursor += rows
   
@@ -830,8 +793,7 @@ def _write_data_markup(book, sheet, data_markup, row, column):
       _write_description(
           book, sheet, 
           description, 
-          description_point[0], description_point[1], columns
-      )
+          description_point[0], description_point[1], columns)
   
   return row_cursor, columns
 
@@ -844,9 +806,9 @@ def _write_data_markups(book, sheet, data_markups, row, column):
     max_columns = 0
     
     for data_markup in wrap_in_list(data_markups):
-        rows, columns = _write_data_markup(book, sheet, data_markup, row + row_cursor, column)
+        rows, columns = _write_data_markup(book, sheet, data_markup, row+row_cursor, column)
         
-        row_cursor += rows + 1
+        row_cursor += rows+1
         if columns > max_columns:
             max_columns = columns
         
@@ -873,8 +835,7 @@ def Export_to_excel(workbook, sheet_name, data_markups, sheet_description = None
         _write_description(
             book, sheet, 
             sheet_description, 
-            sheet_description_point[0], sheet_description_point[1], columns
-        )
+            sheet_description_point[0], sheet_description_point[1], columns)
     
     if need_close:
         book.close()

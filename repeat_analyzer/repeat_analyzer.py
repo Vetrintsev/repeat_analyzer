@@ -1,17 +1,22 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
+# In[ ]:
 
+
+import pickle
+import datetime
+import time
+from collections import Counter
+from operator import methodcaller
 
 import pandas as pd
 import numpy as np
-import datetime
-import time
 import xlsxwriter
-import sys
-import pickle
-from collections import Counter
+
+from repeat_analyzer.vectorizer import FeauterVectorizer, SequenceVectorizer, Clusterizer
+
+__all__ = ['RepeatAnalyzerModel', 'RepeatAnalyzer']
 
 
 # In[ ]:
@@ -21,10 +26,22 @@ class BadDataStructure(Exception): pass
 class WrongProcedure(Exception): pass
 
 
-# In[400]:
+# In[ ]:
 
 
-class Repeat_analyzer_model:
+def wrap_in_list(obj):
+    return obj if (type(obj) is list) else [obj]
+
+def wrap_items_in_list(source_dict, keys):
+    for param in keys:
+        if param in source_dict:
+            source_dict[param] = wrap_in_list(source_dict[param])
+
+
+# In[ ]:
+
+
+class RepeatAnalyzerModel:
     
     states = {k: v for v, k in enumerate([
         'init',
@@ -53,6 +70,11 @@ class Repeat_analyzer_model:
         self.state = self.states['date_column']
     
     def group_set_parameters(self, **parameters):
+        wrap_items_in_list(
+            parameters,
+            ['episodes_group_by', 'incidents_group_by']
+        )
+            
         self.group_parameters.update(parameters)
     
     group_column_names = [
@@ -64,10 +86,9 @@ class Repeat_analyzer_model:
     ]
     
     def group(
-        self,
-        df,
-        **parameters
-    ):        
+            self,
+            df,
+            **parameters):        
         if self.state < self.states['date_column']:
             raise WrongProcedure('Метод group можно вызвать только после set_date_column')
 
@@ -77,65 +98,65 @@ class Repeat_analyzer_model:
         incidents_group_by = self.group_parameters['incidents_group_by']
         recurrence_period = self.group_parameters['recurrence_period']
         
-        if type(recurrence_period) is int:
-            recurrence_period = datetime.timedelta(days = recurrence_period)
+        columns_hasnans = [col for col in episodes_group_by + incidents_group_by if df[col].hasnans]
+        if len(columns_hasnans) > 0:
+            raise AttributeError('Столбцы для группировки содержат пустые значения, это недопустимо:\n["{}"]'.format(
+                '",\n"'.join(columns_hasnans)
+            )) # при кластеризации это может привести к искажению энкодеров
+        
+        if isinstance(recurrence_period, int):
+            recurrence_period = datetime.timedelta(days=recurrence_period)
             
-        elif type(recurrence_period) is dict:
+        elif isinstance(recurrence_period, dict):
             recurrence_period = datetime.timedelta(**recurrence_period)
             
-        elif type(recurrence_period) is not datetime.timedelta:
+        elif not isinstance(recurrence_period, datetime.timedelta):
             raise TypeError(f'recurrence_period принадлежит типу \'{type(recurrence_period).__name__}\', допускается только \'int\', \'dict\', \'timedelta\'')
         
         df = df.drop(
-            columns = self.group_column_names + self.cluster_column_names, 
-            errors = 'ignore'
-        )
+            columns=self.group_column_names+self.cluster_column_names, 
+            errors='ignore')
         
         # создадим карту групп для экономии памяти
         mapper = df.groupby(
-            episodes_group_by + incidents_group_by,
-            as_index = False
-        ).agg({
-            self.date_column: 'min'
-        }).reset_index().rename(
-            columns = {'index': 'incident_id'}
-        ).merge(
-            df[episodes_group_by].drop_duplicates().reset_index(
-                drop = True
-            ).reset_index().rename(
-                columns = {'index': 'group_id'}
-            ),
-            on = episodes_group_by
-        ).merge(
-            df[
-                episodes_group_by + incidents_group_by
-            ].reset_index(),
-            on = episodes_group_by + incidents_group_by
-        ).drop(
-            columns = episodes_group_by + incidents_group_by
-        )
+                episodes_group_by+incidents_group_by,
+                as_index=False
+            ).agg({
+                self.date_column: 'min'
+            }).reset_index().rename(
+                columns={'index': 'incident_id'}
+            ).merge(
+                df[episodes_group_by].drop_duplicates().reset_index(
+                        drop=True
+                    ).reset_index().rename(
+                        columns={'index': 'group_id'}),
+                on=episodes_group_by
+            ).merge(
+                df[episodes_group_by+incidents_group_by].reset_index(),
+                on=episodes_group_by+incidents_group_by
+            ).drop(
+                columns=episodes_group_by+incidents_group_by)
         
         # продолжим работу с инцидентами
         incidents = mapper.drop(
-            columns = 'data_id'
-        ).drop_duplicates().sort_values(
-            ['group_id', self.date_column]
-        ).reset_index(
-            drop = True
-        ).reset_index()
+                columns='data_id'
+            ).drop_duplicates().sort_values(
+                ['group_id', self.date_column]
+            ).reset_index(
+                drop=True
+            ).reset_index()
         
         # привяжим к инцидентам предшествующие инциденты
-        incidents['prev_index'] = incidents['index'] - 1
+        incidents['prev_index'] = incidents['index']-1
         incidents = incidents.merge(
             incidents,
-            how = 'left',
-            left_on = 'prev_index',
-            right_on = 'index',
-            suffixes=('', '_prev')
-        )
+            how='left',
+            left_on='prev_index',
+            right_on='index',
+            suffixes=('', '_prev'))
         
         # рассчитаем время, которое прошло с предидущего инцидента
-        incidents['recurrence_period'] = incidents[self.date_column] - incidents[f'{self.date_column}_prev']
+        incidents['recurrence_period'] = incidents[self.date_column]-incidents[f'{self.date_column}_prev']
         
         incidents.loc[
             (incidents['recurrence_period'] > recurrence_period)
@@ -146,11 +167,9 @@ class Repeat_analyzer_model:
         # определим инциденты, с которых начинаются эпизоды
         incidents.loc[
             incidents['recurrence_period'].isna(), 
-            'episode_id'
-        ] = incidents.loc[
-            incidents['recurrence_period'].isna(), 
-            'incident_id'
-        ]
+            'episode_id'] = incidents.loc[
+                incidents['recurrence_period'].isna(), 
+                'incident_id']
         
         # привяжем повторные инциденты к эпизоду
         incidents['episode_id'] = incidents['episode_id'].ffill()
@@ -158,15 +177,13 @@ class Repeat_analyzer_model:
         # Выявляем полноценные эпизоды
         incidents['episode_begining'] = ~incidents['episode_id'].isin(
             incidents[
-                incidents[self.date_column] < (mapper[self.date_column].min() + recurrence_period)
-            ]['episode_id'].unique()
-        )
+                incidents[self.date_column] < (mapper[self.date_column].min()+recurrence_period)
+            ]['episode_id'].unique())
         
         incidents['episode_end'] = ~incidents['episode_id'].isin(
             incidents[
-                incidents[self.date_column] > (mapper[self.date_column].max() - recurrence_period)
-            ]['episode_id'].unique()
-        )
+                incidents[self.date_column] > (mapper[self.date_column].max()-recurrence_period)
+            ]['episode_id'].unique())
         
         self.state = self.states['group']
         
@@ -176,86 +193,83 @@ class Repeat_analyzer_model:
                 'data_id', 
                 'incident_id'
             ]].merge(
-                incidents[[
-                    'episode_id',
-                    'incident_id',
-                    'recurrence_period',
-                    'episode_begining',
-                    'episode_end'
-                ]],
-                on = 'incident_id'
-            ).set_index(
-                'data_id'
-            ),
+                    incidents[[
+                        'episode_id',
+                        'incident_id',
+                        'recurrence_period',
+                        'episode_begining',
+                        'episode_end'
+                    ]],
+                    on = 'incident_id'
+                ).set_index(
+                    'data_id'),
             left_index = True,
-            right_index = True
-        )
+            right_index = True)
     
     def clusterize_fit(
-        self, 
-        df, 
-        categories, 
-        measures, 
-        drop_incomplete_episodes = True,
-        max_episode_depth = None
-    ):
+            self, 
+            df, 
+            categories=None,
+            measures=None, 
+            drop_incomplete_episodes=True,
+            max_episode_depth=None):
         if self.state < self.states['group']:
             raise WrongProcedure('Метод clusterize_fit можно вызвать только после group')
-        
-        from vectorizer import Feauter_vectorizer, Sequence_vectorizer, Clusterizer
         
         if drop_incomplete_episodes: 
             df = df[df['episode_begining'] & df['episode_end']]
         
-        self.incidents_vectorizer = Feauter_vectorizer(
+        df = self._clusterize_prepare_data(df)
+        
+        self.incidents_vectorizer = FeauterVectorizer(
             df,
             categories,
             [{
                 'column': 'recurrence_period',
                 'agg': 'first', 
                 'algorithm': 'logarithm'
-            }] + measures,
-            'incident_id'
-        )
+            }] + ([] if measures is None else measures),
+            'incident_id')
         
-        self.episodes_vectorizer = Sequence_vectorizer(
+        self.episodes_vectorizer = SequenceVectorizer(
             self._clusterize_prepare_incidents(df), 
             'Обучение автоэнкодера эпизодов',
-            max_episode_depth
-        )
+            max_episode_depth)
         
         self.clusterizator = Clusterizer(
             self.episodes_vectorizer(incidents), 
-            True
-        )
+            True)
         
         self.statistics = None
         
         self.state = self.states['clusterize_fit']
     
+    def _clusterize_prepare_data(self, df):
+        df = df.copy()
+        df['recurrence_period'] = df['recurrence_period'].map(methodcaller('total_seconds'))
+        return df
+    
     def _clusterize_prepare_incidents(self, df):        
         incidents = self.incidents_vectorizer(df)
         
         return incidents.merge(
-            df[['incident_id', 'episode_id']].drop_duplicates().set_index('incident_id'),
-            left_index = True,
-            right_index = True
-        ).reset_index()[
-            ['episode_id', 'incident_id'] + [
-                col for col in incidents.columns 
-                if col not in ['incident_id', 'episode_id']
-            ]
-        ].to_numpy(np.float32)
+                df[['incident_id', 'episode_id']].drop_duplicates().set_index('incident_id'),
+                left_index = True,
+                right_index = True
+            ).reset_index()[
+                ['episode_id', 'incident_id'] + [
+                    col for col in incidents.columns 
+                    if col not in ['incident_id', 'episode_id']
+                ]
+            ].to_numpy(np.float32)
     
     def _clusterize_update_statistics(self, clusters):
-        
         current_statistics = clusters.groupby(
-            'cluster_id'
-        ).agg({
-            'episode_id':'count'
-        }).rename(
-            columns = {'episode_id': datetime.datetime.now().strftime('%Y.%m.%d %H:%M')}
-        )
+                'cluster_id'
+            ).agg(
+                {'episode_id': 'count'}
+            ).rename(
+                columns = {'episode_id': datetime.datetime.now().strftime('%Y.%m.%d %H:%M')})
         
         if self.statistics is None:
             self.statistics = current_statistics
@@ -263,9 +277,8 @@ class Repeat_analyzer_model:
         else:
             self.statistics = self.statistics.merge(
                 current_statistics,
-                left_index = True,
-                right_index = True,
-            )
+                left_index=True,
+                right_index=True)
     
     cluster_column_names = ['cluster_id', 'clustering_quality']
     
@@ -274,37 +287,35 @@ class Repeat_analyzer_model:
         if self.state < self.states['clusterize_fit']:
             raise WrongProcedure('Метод clusterize можно вызвать только после clusterize_fit')
         
+        import pandas as pd
+        
         clusters = pd.DataFrame(
             self.clusterizator(
                 self.episodes_vectorizer(
-                    self._clusterize_prepare_incidents(df)
-                )
-            ),
-            columns = ['episode_id'] + self.cluster_column_names
-        )
+                    self._clusterize_prepare_incidents(
+                        self._clusterize_prepare_data(df)))),
+            columns = ['episode_id']+self.cluster_column_names)
         
         self._clusterize_update_statistics(clusters)
         
         self.state = self.states['clusterize']
         
         return df.drop(
-            columns = self.cluster_column_names, 
-            errors = 'ignore'
-        ).merge(
-            clusters,
-            on = ['episode_id']
-        )
+                columns=self.cluster_column_names, 
+                errors='ignore'
+            ).merge(
+                clusters,
+                on=['episode_id'])
     
     def to_excel_set_parameters(self, **parameters):
         self.to_excel_parameters.update(parameters)
     
     def to_excel(
-        self,
-        df,
-        workbook,
-        sheet_name = 'Sheet 1',
-        **parameters
-    ):
+            self,
+            df,
+            workbook,
+            sheet_name='Sheet 1',
+            **parameters):
         if self.state < self.states['clusterize']:
             raise WrongProcedure('Метод to_excel можно вызвать только после clusterize')
         
@@ -333,9 +344,11 @@ class Repeat_analyzer_model:
         if self.to_excel_parameters.get('system_column_headers', None) is not None:
             system_titles.update(self.to_excel_parameters['system_column_headers'])
 
-        recurrence_period_unit_func = (lambda x: lambda s: s.iloc[0].total_seconds() / x)({
-            'seconds': 1, 'minutes': 60, 'hours': 3600, 'days': 86400
-        }[self.to_excel_parameters.get('recurrence_period_unit', 'hours')])
+        def period_unit_func(time_part):
+            base = {'seconds': 1, 'minutes': 60, 'hours': 3600, 'days': 86400}[time_part]
+            return lambda s: s.iloc[0].total_seconds() / base
+        recurrence_period_unit_func = period_unit_func(
+            self.to_excel_parameters.get('recurrence_period_unit', 'hours'))
         
         incidents_params = {
             'group_columns': 'incident_id', 
@@ -371,11 +384,10 @@ class Repeat_analyzer_model:
             'df': self.df[
                 self.df['episode_id'].isin(
                     self.df.groupby('episode_id').agg(
-                        {'incident_id':'nunique'}
-                    ).query('incident_id >= {}'.format(
-                        self.to_excel_parameters.get('min_episode_length', 1)
-                    )).index
-                )
+                            {'incident_id':'nunique'}
+                        ).query('incident_id >= {}'.format(
+                            self.to_excel_parameters.get('min_episode_length', 1)
+                        )).index)
             ],
             'group_columns': 'cluster_id', 
             'export_columns': [
@@ -396,24 +408,21 @@ class Repeat_analyzer_model:
         }
         
         Export_to_excel(
-            workbook = workbook, 
-            sheet_name = sheet_name, 
-            data_markups = [
+            workbook=workbook, 
+            sheet_name=sheet_name, 
+            data_markups=[
                 statistics,
                 clusters_params
             ], 
-            sheet_description = self.to_excel_parameters.get('description')
-        )
+            sheet_description=self.to_excel_parameters.get('description'))
         
         self.state = self.states['to_excel']
 
 
-# In[401]:
+# In[ ]:
 
 
-import 
-
-class Repeat_analyzer:
+class RepeatAnalyzer:
     
     def __init__(self, df, date_column):
         """
@@ -424,22 +433,25 @@ class Repeat_analyzer:
             Важно, если при группировке эпизодов, в рамках одного уникального
             идентификатора инцидента будет несколько значений date_column, 
             выбрана будет наименьшая.
+        
         """ 
         if df.columns.nlevels != 1:
             raise BadDataStructure(f'df.columns.nlevels = {df.columns.nlevels}, допустимы только одноуровневые заголовки.')
-
-        self.model = Repeat_analyzer_model()
+        
+        if df[date_column].hasnans:
+            raise AttributeError('Столбец с датами содержит пустые значения, это недопустимо.')
+        
+        self.model = RepeatAnalyzerModel()
         self.model.set_date_column(df, date_column)
         
-        self.df = df[~df[date_column].isna()].reset_index()
+        self.df = df.reset_index()
         self.df.index.names = ['data_id']
     
     def group(
-        self,
-        episodes_group_by,
-        incidents_group_by,
-        recurrence_period = 31
-    ):
+            self,
+            episodes_group_by,
+            incidents_group_by,
+            recurrence_period=31):
         """
         episodes_group_by - список наименований столбцов, по которым необходимо 
             сгруппировать эпизоды:
@@ -473,21 +485,19 @@ class Repeat_analyzer:
         """
         
         self.df = self.model.group(
-            df = self.df,
-            episodes_group_by = episodes_group_by,
-            incidents_group_by = incidents_group_by,
-            recurrence_period = recurrence_period
-        )
+            df=self.df,
+            episodes_group_by=episodes_group_by,
+            incidents_group_by=incidents_group_by,
+            recurrence_period=recurrence_period)
         
         return self
     
     def clusterize(
-        self,
-        categories, 
-        measures, 
-        drop_incomplete_episodes = True,
-        max_episode_depth = None
-    ):
+            self,
+            categories, 
+            measures, 
+            drop_incomplete_episodes=True,
+            max_episode_depth=None):
         """
         categories - список инструкций для кодирования категорий:
             Например, тематика, цвет, класс обслуживания и т.д.
@@ -556,34 +566,32 @@ class Repeat_analyzer:
             Актуально когда группировка привела к опявлению большого количества эпизиодов с большим 
             количеством инцидентов, такие ситуации могут привести к недостатоку памяти.
             По умолчанию алгоритм отбрасывает аномально большие эпизоды при обучении.
-        """
         
+        """
         self.model.clusterize_fit(
             self.df,
             categories, 
             measures, 
-            drop_incomplete_episodes = drop_incomplete_episodes,
-            max_episode_depth = max_episode_depth
-        )
+            drop_incomplete_episodes=drop_incomplete_episodes,
+            max_episode_depth=max_episode_depth)
         
         self.df = self.model.clusterize(self.df)
         
         return self
         
     def to_excel(
-        self,
-        cluster_columns,
-        episode_columns,
-        incident_columns,
-        workbook,
-        sheet_name = 'Sheet 1',
-        description = None,
-        max_episode_length = 5,
-        min_episode_length = 2,
-        recurrence_period_unit = 'hours',
-        default_format = {'column_width': 15},
-        system_column_headers = None
-    ):
+            self,
+            cluster_columns,
+            episode_columns,
+            incident_columns,
+            workbook,
+            sheet_name='Sheet 1',
+            description=None,
+            max_episode_length=5,
+            min_episode_length=2,
+            recurrence_period_unit='hours',
+            default_format={'column_width': 15},
+            system_column_headers=None):
         """
         episode_columns - список столбцов вывода в Excel группирующих эпизод, 
             может принимать значения:
@@ -688,24 +696,25 @@ class Repeat_analyzer:
                 'incidents_collapsed_separator': 'еще инцидентов: {:.0f}...',
                 'recurrence_period': 'Прошло времени до повторения'
             }
-        """
         
+        """
         self.model.to_excel(
-            df = self.df,
-            workbook = workbook,
-            sheet_name = sheet_name,
-            cluster_columns = cluster_columns,
-            episode_columns = episode_columns,
-            incident_columns = incident_columns,
-            description = description,
-            max_episode_length = max_episode_length,
-            min_episode_length = min_episode_length,
-            recurrence_period_unit = recurrence_period_unit,
-            default_format = default_format,
-            system_column_headers = system_column_headers
-        )
+            df=self.df,
+            workbook=workbook,
+            sheet_name=sheet_name,
+            cluster_columns=cluster_columns,
+            episode_columns=episode_columns,
+            incident_columns=incident_columns,
+            description=description,
+            max_episode_length=max_episode_length,
+            min_episode_length=min_episode_length,
+            recurrence_period_unit=recurrence_period_unit,
+            default_format=default_format,
+            system_column_headers=system_column_headers)
+        
+        return self
     
-    def transform(self, workbook = None, sheet_name = None):
+    def transform(self, workbook=None, sheet_name=None):
         """
         Если workbook передан и не None, то сразу будет вызван экспорт 
         в Excel с сохаренными ранее параметрами.
@@ -723,29 +732,28 @@ class Repeat_analyzer:
         sheet_name - наименование нового листа в книге excel,
             на который будет записан результат.
             sheet_name = 'Лист 1'
+        
         """
         self.df = self.model.clusterize(
-            df = self.model.group(
-                df = self.df
-            )
-        )
+            df=self.model.group(
+                df=self.df))
         
         if workbook is not None:
             self.model.to_excel(
-                df = self.df,
-                workbook = workbook,
-                sheet_name = sheet_name,
-            )
+                df=self.df,
+                workbook=workbook,
+                sheet_name=sheet_name)
+        
+        return self
     
     def save_model(self, path):
-        """
-        path - путь и имя файла для сохранения модели.
-        """
-        
+        """path - путь и имя файла для сохранения модели."""
         with open(path, 'wb') as f:
             pickle.dump(self.model, f)
         
         print(f'Модель успешно сохранена в файле: {path}')
+        
+        return self
     
     @classmethod
     def load_model(cls, path, df):
@@ -755,6 +763,7 @@ class Repeat_analyzer:
         df - экземпляр pandas.DataFrame. 
             Структура исходных данных должна быть схожа с первичными данными,
             на основе которых была построена модель.
+        
         """
         self = cls.__new__(cls)
         
@@ -766,4 +775,6 @@ class Repeat_analyzer:
         
         self.df = df.reset_index()
         self.df.index.names = ['data_id']
+        
+        return self
 
