@@ -7,14 +7,24 @@
 import pickle
 import datetime
 import time
+import sys
 from collections import Counter
 from operator import methodcaller
+
+
+# In[ ]:
+
 
 import pandas as pd
 import numpy as np
 import xlsxwriter
 
+
+# In[ ]:
+
+
 from repeat_analyzer.vectorizer import FeauterVectorizer, SequenceVectorizer, Clusterizer
+from repeat_analyzer.excel_exporter import Export_to_excel
 
 __all__ = ['RepeatAnalyzerModel', 'RepeatAnalyzer']
 
@@ -47,8 +57,9 @@ class RepeatAnalyzerModel:
         'init',
         'date_column',
         'group',
-        'clusterize_fit',
-        'clusterize',
+        'fit_incident_vectorizer',
+        'fit_episode_vectorizer',
+        'fit_clusterizator',
         'to_excel'
     ])}
     
@@ -69,13 +80,28 @@ class RepeatAnalyzerModel:
         
         self.state = self.states['date_column']
     
+    def _detect_recurrence_period(self, args):
+        if isinstance(args, int):
+            return datetime.timedelta(days=args)
+            
+        elif isinstance(args, dict):
+            return datetime.timedelta(**args)
+            
+        elif isinstance(arguments, datetime.timedelta):
+            return args
+        
+        raise TypeError(f'recurrence_period принадлежит типу \'{type(arguments).__name__}\', допускается только \'int\', \'dict\', \'timedelta\'')
+    
     def group_set_parameters(self, **parameters):
         wrap_items_in_list(
             parameters,
-            ['episodes_group_by', 'incidents_group_by']
-        )
-            
+            ['episodes_group_by', 'incidents_group_by'])
+        
+        parameters['recurrence_period'] = self._detect_recurrence_period(parameters['recurrence_period'])
+        
         self.group_parameters.update(parameters)
+        
+        self.state = self.states['group']
     
     group_column_names = [
         'episode_id',
@@ -91,8 +117,9 @@ class RepeatAnalyzerModel:
             **parameters):        
         if self.state < self.states['date_column']:
             raise WrongProcedure('Метод group можно вызвать только после set_date_column')
-
-        self.group_set_parameters(**parameters)
+        
+        if len(parameters) > 0:
+            self.group_set_parameters(**parameters)
         
         episodes_group_by = self.group_parameters['episodes_group_by']
         incidents_group_by = self.group_parameters['incidents_group_by']
@@ -104,15 +131,6 @@ class RepeatAnalyzerModel:
                 '",\n"'.join(columns_hasnans)
             )) # при кластеризации это может привести к искажению энкодеров
         
-        if isinstance(recurrence_period, int):
-            recurrence_period = datetime.timedelta(days=recurrence_period)
-            
-        elif isinstance(recurrence_period, dict):
-            recurrence_period = datetime.timedelta(**recurrence_period)
-            
-        elif not isinstance(recurrence_period, datetime.timedelta):
-            raise TypeError(f'recurrence_period принадлежит типу \'{type(recurrence_period).__name__}\', допускается только \'int\', \'dict\', \'timedelta\'')
-        
         df = df.drop(
             columns=self.group_column_names+self.cluster_column_names, 
             errors='ignore')
@@ -120,10 +138,13 @@ class RepeatAnalyzerModel:
         # создадим карту групп для экономии памяти
         mapper = df.groupby(
                 episodes_group_by+incidents_group_by,
-                as_index=False
+                as_index=False,
+                sort=False
             ).agg({
                 self.date_column: 'min'
-            }).reset_index().rename(
+            }).sort_values(
+                self.date_column
+            ).reset_index(drop=True).reset_index().rename(
                 columns={'index': 'incident_id'}
             ).merge(
                 df[episodes_group_by].drop_duplicates().reset_index(
@@ -146,7 +167,7 @@ class RepeatAnalyzerModel:
                 drop=True
             ).reset_index()
         
-        # привяжим к инцидентам предшествующие инциденты
+        # Привяжим к инцидентам предшествующие инциденты
         incidents['prev_index'] = incidents['index']-1
         incidents = incidents.merge(
             incidents,
@@ -155,7 +176,7 @@ class RepeatAnalyzerModel:
             right_on='index',
             suffixes=('', '_prev'))
         
-        # рассчитаем время, которое прошло с предидущего инцидента
+        # Рассчитаем время, которое прошло с предидущего инцидента
         incidents['recurrence_period'] = incidents[self.date_column]-incidents[f'{self.date_column}_prev']
         
         incidents.loc[
@@ -164,15 +185,25 @@ class RepeatAnalyzerModel:
             'recurrence_period'
         ] = None
         
-        # определим инциденты, с которых начинаются эпизоды
+        # Определим инциденты, с которых начинаются эпизоды
         incidents.loc[
             incidents['recurrence_period'].isna(), 
             'episode_id'] = incidents.loc[
                 incidents['recurrence_period'].isna(), 
                 'incident_id']
         
-        # привяжем повторные инциденты к эпизоду
+        # Привяжем повторные инциденты к эпизоду
         incidents['episode_id'] = incidents['episode_id'].ffill()
+        
+        # Удалим эпизоды с одиночными инцидентами 
+        incidents = incidents[incidents['episode_id'].isin(
+            incidents.groupby(
+                'episode_id'
+            ).agg(
+                {'incident_id':'count'}
+            ).query(
+                'incident_id > 1'
+            ).index)].copy()
         
         # Выявляем полноценные эпизоды
         incidents['episode_begining'] = ~incidents['episode_id'].isin(
@@ -184,9 +215,7 @@ class RepeatAnalyzerModel:
             incidents[
                 incidents[self.date_column] > (mapper[self.date_column].max()-recurrence_period)
             ]['episode_id'].unique())
-        
-        self.state = self.states['group']
-        
+
         # вернем индексы и привяжем признаки к исходному DataFrame
         return df.merge(
             mapper[[
@@ -206,52 +235,44 @@ class RepeatAnalyzerModel:
             left_index = True,
             right_index = True)
     
-    def clusterize_fit(
+    def fit_incident_vectorizer(
             self, 
             df, 
             categories=None,
-            measures=None, 
-            drop_incomplete_episodes=True,
-            max_episode_depth=None):
+            measures=None):
         if self.state < self.states['group']:
-            raise WrongProcedure('Метод clusterize_fit можно вызвать только после group')
-        
-        if drop_incomplete_episodes: 
-            df = df[df['episode_begining'] & df['episode_end']]
-        
-        df = self._clusterize_prepare_data(df)
+            raise WrongProcedure('Метод fit_incident_vectorizer можно вызвать только после group')
         
         self.incidents_vectorizer = FeauterVectorizer(
-            df,
+            self._vectorize_incident_prepare_data(df),
             categories,
             [{
                 'column': 'recurrence_period',
                 'agg': 'first', 
-                'algorithm': 'logarithm'
+                'algorithm': 'logarithm',
+                'params': {
+                    'correction_value': 0,
+                    'logarithm_base': self.group_parameters['recurrence_period']
+                }
             }] + ([] if measures is None else measures),
             'incident_id')
         
-        self.episodes_vectorizer = SequenceVectorizer(
-            self._clusterize_prepare_incidents(df), 
-            'Обучение автоэнкодера эпизодов',
-            max_episode_depth)
-        
-        self.clusterizator = Clusterizer(
-            self.episodes_vectorizer(incidents), 
-            True)
-        
         self.statistics = None
         
-        self.state = self.states['clusterize_fit']
+        self.state = self.states['fit_incident_vectorizer']
     
-    def _clusterize_prepare_data(self, df):
+    def _vectorize_incident_prepare_data(self, df):
         df = df.copy()
         df['recurrence_period'] = df['recurrence_period'].map(methodcaller('total_seconds'))
         return df
     
-    def _clusterize_prepare_incidents(self, df):        
-        incidents = self.incidents_vectorizer(df)
-        
+    def vectorize_incidents(self, df):
+        if self.state < self.states['fit_incident_vectorizer']:
+            raise WrongProcedure('Метод vectorize_incidents можно вызвать только после fit_incident_vectorizer')
+            
+        incidents = self.incidents_vectorizer(
+            self._vectorize_incident_prepare_data(df))
+
         return incidents.merge(
                 df[['incident_id', 'episode_id']].drop_duplicates().set_index('incident_id'),
                 left_index = True,
@@ -262,6 +283,32 @@ class RepeatAnalyzerModel:
                     if col not in ['incident_id', 'episode_id']
                 ]
             ].to_numpy(np.float32)
+    
+    def fit_episode_vectorizer(
+            self,
+            df,
+            drop_incomplete_episodes=True,
+            max_episode_depth=None):
+        if self.state < self.states['fit_incident_vectorizer']:
+            raise WrongProcedure('Метод fit_episode_vectorizer можно вызвать только после fit_incident_vectorizer')
+        
+        if drop_incomplete_episodes:
+            df = df[df['episode_begining'] & df['episode_end']]
+        
+        self.episodes_vectorizer = SequenceVectorizer(
+            self.vectorize_incidents(df), 
+            'Обучение автоэнкодера эпизодов',
+            max_episode_depth)
+        
+        self.statistics = None
+        
+        self.state = self.states['fit_episode_vectorizer']
+    
+    def vectorize_episodes(self, df):
+        if self.state < self.states['fit_episode_vectorizer']:
+            raise WrongProcedure('Метод vectorize_episodes можно вызвать только после fit_episode_vectorizer')
+            
+        return self.episodes_vectorizer(self.vectorize_incidents(df))
     
     def _clusterize_update_statistics(self, clusters):
         current_statistics = clusters.groupby(
@@ -282,23 +329,31 @@ class RepeatAnalyzerModel:
     
     cluster_column_names = ['cluster_id', 'clustering_quality']
     
+    def fit_clusterizator(self, df, drop_incomplete_episodes=True):
+        if self.state < self.states['fit_episode_vectorizer']:
+            raise WrongProcedure('Метод fit_clusterizator можно вызвать только после fit_episode_vectorizer')
+        
+        if drop_incomplete_episodes:
+            df = df[df['episode_begining'] & df['episode_end']]
+        
+        self.clusterizator = Clusterizer(self.vectorize_episodes(df))
+        
+        self.statistics = None
+        
+        self.state = self.states['fit_clusterizator']
+    
     def clusterize(self, df):
         
-        if self.state < self.states['clusterize_fit']:
-            raise WrongProcedure('Метод clusterize можно вызвать только после clusterize_fit')
+        if self.state < self.states['fit_clusterizator']:
+            raise WrongProcedure('Метод clusterize можно вызвать только после fit_clusterizator')
         
         import pandas as pd
         
         clusters = pd.DataFrame(
-            self.clusterizator(
-                self.episodes_vectorizer(
-                    self._clusterize_prepare_incidents(
-                        self._clusterize_prepare_data(df)))),
+            self.clusterizator(self.vectorize_episodes(df)),
             columns = ['episode_id']+self.cluster_column_names)
         
         self._clusterize_update_statistics(clusters)
-        
-        self.state = self.states['clusterize']
         
         return df.drop(
                 columns=self.cluster_column_names, 
@@ -316,10 +371,8 @@ class RepeatAnalyzerModel:
             workbook,
             sheet_name='Sheet 1',
             **parameters):
-        if self.state < self.states['clusterize']:
-            raise WrongProcedure('Метод to_excel можно вызвать только после clusterize')
-        
-        from excel_exporter import Export_to_excel
+        if self.state < self.states['fit_clusterizator']:
+            raise WrongProcedure('Метод to_excel можно вызвать только после fit_clusterizator')
         
         self.to_excel_set_parameters(**parameters)
         
@@ -381,14 +434,12 @@ class RepeatAnalyzerModel:
         }
         
         clusters_params = {
-            'df': self.df[
-                self.df['episode_id'].isin(
-                    self.df.groupby('episode_id').agg(
-                            {'incident_id':'nunique'}
-                        ).query('incident_id >= {}'.format(
-                            self.to_excel_parameters.get('min_episode_length', 1)
-                        )).index)
-            ],
+            'df': df[df['episode_id'].isin(
+                df.groupby('episode_id').agg(
+                        {'incident_id':'nunique'}
+                    ).query('incident_id >= {}'.format(
+                        self.to_excel_parameters.get('min_episode_length', 1)
+                    )).index)],
             'group_columns': 'cluster_id', 
             'export_columns': [
                 {'columns': 'cluster_id', 'title': system_titles['cluster_id']},
@@ -416,7 +467,7 @@ class RepeatAnalyzerModel:
             ], 
             sheet_description=self.to_excel_parameters.get('description'))
         
-        self.state = self.states['to_excel']
+        self.state = self.states['to_excel']        
 
 
 # In[ ]:
@@ -492,12 +543,10 @@ class RepeatAnalyzer:
         
         return self
     
-    def clusterize(
+    def fit_icident_vectorizer(
             self,
             categories, 
-            measures, 
-            drop_incomplete_episodes=True,
-            max_episode_depth=None):
+            measures):
         """
         categories - список инструкций для кодирования категорий:
             Например, тематика, цвет, класс обслуживания и т.д.
@@ -558,6 +607,19 @@ class RepeatAnalyzer:
                     logarithm_base: None # База для логарифма, по умолчанию максимальное значение в выборке + 1
                 }
         
+        """
+        self.model.fit_incident_vectorizer(
+            self.df,
+            categories, 
+            measures)
+        
+        return self
+    
+    def fit_episode_vectorizer(
+            self,
+            drop_incomplete_episodes=True,
+            max_episode_depth=None):
+        """
         drop_incomplete_episodes - True (по умолчанию) или False, указывает алгоритму - отбросить 
             неполные эпизоды (рекомендуется) или нет.
         
@@ -568,15 +630,31 @@ class RepeatAnalyzer:
             По умолчанию алгоритм отбрасывает аномально большие эпизоды при обучении.
         
         """
-        self.model.clusterize_fit(
+        self.model.fit_episode_vectorizer(
             self.df,
-            categories, 
-            measures, 
             drop_incomplete_episodes=drop_incomplete_episodes,
             max_episode_depth=max_episode_depth)
         
-        self.df = self.model.clusterize(self.df)
+        return self
+    
+    def fit_clusterizator(self):
+        self.model.fit_clusterizator(self.df)    
+        return self
+    
+    def fit(
+            self, 
+            categories, 
+            measures, 
+            drop_incomplete_episodes=True,
+            max_episode_depth=None):
+        self.fit_icident_vectorizer(categories, measures)
+        self.fit_episode_vectorizer(drop_incomplete_episodes, max_episode_depth)
+        self.fit_clusterizator()
         
+        return self
+    
+    def clusterize(self):
+        self.df = self.model.clusterize(self.df)
         return self
         
     def to_excel(
@@ -734,15 +812,19 @@ class RepeatAnalyzer:
             sheet_name = 'Лист 1'
         
         """
-        self.df = self.model.clusterize(
-            df=self.model.group(
-                df=self.df))
+        try:
+            self.df = self.model.group(df=self.df)
+            self.df = self.model.clusterize(df=self.df)
+
+            if workbook is not None:
+                self.model.to_excel(
+                    df=self.df,
+                    workbook=workbook,
+                    sheet_name=sheet_name)
         
-        if workbook is not None:
-            self.model.to_excel(
-                df=self.df,
-                workbook=workbook,
-                sheet_name=sheet_name)
+        except WrongProcedure:
+            if workbook is not None:
+                raise WrongProcedure('Нельзя осуществить экспорт в Excel, пока обучение модели не завершено.')
         
         return self
     

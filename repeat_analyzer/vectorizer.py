@@ -10,6 +10,10 @@ import sys
 from collections import Counter
 from math import log
 
+
+# In[ ]:
+
+
 import pandas as pd
 import numpy as np
 import umap
@@ -18,6 +22,10 @@ from keras.layers import Input, Dense, LSTM, RepeatVector, TimeDistributed
 from keras.models import Model, Sequential, model_from_json
 from keras.preprocessing import sequence
 import matplotlib.pyplot as plt
+
+
+# In[ ]:
+
 
 from repeat_analyzer.progress_it import progress_it, Progress_it_keras
 
@@ -372,7 +380,8 @@ class FeauterNormalizer:
     
     def __call__(self, df):
         df = df.groupby(
-            df.index if (self.index is None) else self.index
+            df.index if (self.index is None) else self.index,
+            sort=False
         ).agg({
             instruction['column']: instruction['agg']
             for instruction in self.instructions
@@ -470,16 +479,16 @@ class FeauterVectorizer:
                 
                 # для 'linear'
                 algorithm_params = {
-                    fillna_value: 0, # Заполнитель для пропущенных значений, по умолчанию 0
-                    correction_value: None, # Вычитатель, по умолчанию минмиальное значение в выборке
-                    correction_factor: None # Мультипликатор, по умолчанию максимальное значение в выборке
+                    'fillna_value': 0, # Заполнитель для пропущенных значений, по умолчанию 0
+                    'correction_value': None, # Вычитатель, по умолчанию минмиальное значение в выборке
+                    'correction_factor': None # Мультипликатор, по умолчанию максимальное значение в выборке
                 }
                 
                 # для 'logarithm'
                 algorithm_params = {
-                    fillna_value: 0, # Заполнитель для пропущенных значений, по умолчанию 0
-                    correction_value: None, # Вычитатель, по умолчанию минмиальное значение в выборке
-                    logarithm_base: None # База для логарифма, по умолчанию максимальное значение в выборке + 1
+                    'fillna_value': 0, # Заполнитель для пропущенных значений, по умолчанию 0
+                    'correction_value': None, # Вычитатель, по умолчанию минмиальное значение в выборке
+                    'logarithm_base': None # База для логарифма, по умолчанию максимальное значение в выборке + 1
                 }
                 
         """
@@ -535,15 +544,17 @@ class FeauterVectorizer:
         e_instructions = []
         ohe_columns = []
         for i in new_instructions:
-            unique_values = df[i['columns']].nunique()
-            if unique_values >= 5:
+            if isinstance(i['columns'], tuple) and len(i['columns'])>1:
                 e_instructions.append(i)
-            elif unique_values > 1:
-                ohe_columns.append(i['columns'])
             else:
-                sys.stderr.write(
-                    'Столбец "{}" содержит единственное значение и будет исключен из обучения'.format(
-                        i['columns']))
+                column = i['columns'][0] if isinstance(i['columns'], tuple) else i['columns']
+                unique_values = df[column].nunique()
+                if unique_values >= 5:
+                    e_instructions.append(i)
+                elif unique_values > 1:
+                    ohe_columns.append(column)
+                else:
+                    sys.stderr.write(f'Столбец "{column}" содержит единственное значение и будет исключен из обучения.')
         
         return e_instructions, ohe_columns
     
@@ -627,8 +638,9 @@ def count_bad_samples(X, y):
     return bad_samples, bad_feuters
 
 def count_bad_sequences(X, y):
-    bad_samples, bad_feuters = count_bad_samples(X.reshape(-1, X.shape[-1]), y.reshape(-1, X.shape[-1]))
-    return np.count_nonzero(np.any(np.any(bad_samples, axis=1).reshape(X.shape[:2]), axis=1)), bad_feuters
+    bad_items, bad_feuters = count_bad_samples(X.reshape(-1, X.shape[-1]), y.reshape(-1, X.shape[-1]))
+    bad_sequences = np.count_nonzero(np.any(np.any(bad_items, axis=1).reshape(X.shape[:2]), axis=1)) 
+    return bad_sequences, bad_feuters, np.count_nonzero(bad_items)
 
 
 # In[ ]:
@@ -668,7 +680,7 @@ class SequenceVectorizer:
         
         return np.hstack([ids.reshape(-1, 1), encoder.predict(X)])
         
-    def detect_sequence_shape(self, data, max_len_quentile=0.9, max_len=None):
+    def detect_sequence_shape(self, data, max_len_quentile=0.8, max_len=None):
         uniques, frequency = np.unique(data[:, 0], return_counts=True)
         
         target_len = np.quantile(
@@ -682,7 +694,7 @@ class SequenceVectorizer:
     def pre_padding_sequences(self, data):
         """returns (sequence_ids, padded_data)"""
         data = sort_2d_array(data, [0, 1])
-        indexes = np.argwhere(np.diff(data[:, 0])).reshape(-1)
+        indexes = np.argwhere(np.diff(data[:, 0])).reshape(-1)+1
         
         return data[np.append([0], indexes), 0], sequence.pad_sequences(
             np.split(data[:, 2:], indexes), 
@@ -701,10 +713,12 @@ class SequenceVectorizer:
         
         encoder = Sequential([
             LSTM(units, activation='elu'),
+            Dense(units, activation='elu'),
             Dense(vector_width, activation='softmax')
         ])
         
         decoder = Sequential([
+            Dense(units, activation='elu'),
             RepeatVector(depth),
             LSTM(units, activation='elu', return_sequences=True),
             TimeDistributed(Dense(width, activation='linear'))
@@ -725,9 +739,15 @@ class SequenceVectorizer:
         ids, data = self.pre_padding_sequences(data)
         
         progress = Progress_it_keras(self.progress_title)
+        sequences_count = data.shape[0]
+        sequences_depth = data.shape[1]
+        feuters_count = data.shape[2]
+        items_count = data.size
         epochs_counter = 0
         prev_error = 0
         speed = 1
+        
+        print(f'Запуск обучения:\nСэмплов {sequences_count}\nГлубина последовательностей {sequences_depth}\nКоличество фич {feuters_count}')
         
         while attempts > 0:
             
@@ -741,20 +761,31 @@ class SequenceVectorizer:
             
             epochs_counter += epochs_per_step
             
-            error, bad_feuters = count_bad_sequences(data, autoencoder.predict(data))
+            bad_sequences, bad_feuters, bad_items = count_bad_sequences(data, autoencoder.predict(data))
+            error = bad_sequences/sequences_count
+            feauters_error = len(bad_feuters)/feuters_count
+            items_error = bad_items/items_count
             
             if epochs_counter > epochs_per_step:
                 speed = prev_error-error
-                if speed < 0: 
+                if speed < 0:
                     attempts -= 1
                 elif ((speed < min_error_step) and (error < 0.9)) or (error <= min_error_step): 
                     break
             
-            progress.progbar.subtitle = f'Доля ошибочных предсказаний: {error} ({-speed:.1%})'
+            progress.progbar.subtitle = f"""
+<p>Доля ошибочных предсказаний: {error:.1%} ({-speed:.1%})</p>
+<p>Доля ошибочных фич: {feauters_error:.1%}</p>
+<p>Доля ошибочных прогнозов: {items_error:.1%}</p>"""
             
             prev_error = error
-        
-        print(f'Доля ошибочных предсказаний: {error} ({-speed:.1%})')
+            
+            # DELETE, TEST ONLY
+            attempts -= 1
+            
+        print(f'Доля ошибочных предсказаний: {error:.1%} ({-speed:.1%})')
+        print(f'Доля ошибочных фич: {feauters_error:.1%}')
+        print(f'Доля ошибочных прогнозов: {items_error:.1%}')
         
         return encoder
 

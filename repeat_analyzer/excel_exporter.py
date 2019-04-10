@@ -304,12 +304,6 @@ class Column_producer:
 
             return func
         
-        if mapper is not None:
-            if type(mapper) is not dict:
-                raise TypeError(f'mapper имеет тип \'{type(mapper)}\', допустимый тип: \'dict\'')
-                
-            def func(series): return series.map(mapper)
-        
         if type(columns) is str:
             def get_series(df): return df[columns]
         
@@ -333,8 +327,15 @@ class Column_producer:
                         v for v in s.astype('str').unique() 
                         if v.lower() not in ['nan', 'nat', 'none']
                     ]))
-            
-            return lambda df: get_unique(get_series(df))
+                
+            if mapper is None:
+                return lambda df: get_unique(get_series(df))
+                
+            else:
+                if type(mapper) is not dict:
+                    raise TypeError(f'mapper имеет тип \'{type(mapper)}\', допустимый тип: \'dict\'')
+                    
+                return lambda df: get_unique(get_series(df).map(mapper))
         
         if type(func) is str:
             return {
